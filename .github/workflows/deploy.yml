@@ -1,0 +1,9 @@
+ push:
+    branches: [main]
+jobs:
+  deploy:
+    uses: DeckyMart/deploy-workflows/.github/workflows/deploy-service.yml@main
+    with:
+      service_name: solver-auth
+      namespace: solver-auth
+    secrets: inherit
