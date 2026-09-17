@@ -1,0 +1,24 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: solver-auth-config
+data:
+  PROJECT_NAME: "app-story-workflow"
+  ENVIRONMENT: "production"
+  OTP_EXPIRE_MINUTES: "10"
+  OTP_MAX_ATTEMPTS: "5"
+  OTP_RESEND_COOLDOWN_SECONDS: "60"
+  FRONTEND_ORIGIN: "https://yourdomain.com"
+  COOKIE_DOMAIN: "deckymart.com"
+  COOKIE_SECURE: "True"
+  MAX_PROFILE_IMAGE_SIZE_MB: "5"
+  MAX_ID_DOCUMENT_SIZE_MB: "5"
+  MAX_SELFIE_SIZE_MB: "15"
+  JWT_ALGORITHM: "HS256"
+  ACCESS_TOKEN_EXPIRE_MINUTES: "15"
+  REFRESH_TOKEN_EXPIRE_DAYS: "7"
+  REGISTRATION_TOKEN_EXPIRE_MINUTES: "30"
+  MAILJET_SENDER_EMAIL: "harrisonaka29@gmail.com"
+  AWS_REGION: "us-east-1"
+  AWS_S3_BUCKET: "decky-auth-storage-655495220449-us-east-1-an"
+  AWS_S3_PUBLIC_BASE_URL: "https://decky-auth-storage-655495220449-us-east-1-an.s3.amazonaws.com"

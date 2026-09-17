@@ -4,6 +4,7 @@ namespace: solver-auth
 resources:
   - namespace.yaml
   - deployment.yaml
+  - configmap.yaml
   - service.yaml
   - ingress.yaml
 images:

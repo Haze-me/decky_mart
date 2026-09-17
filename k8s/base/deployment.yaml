@@ -18,6 +18,8 @@ spec:
           ports:
             - containerPort: 8000
           envFrom:
+            - configMapRef:
+                  name: solver-auth-config
             - secretRef:
                 name: solver-auth-secrets
           readinessProbe:
