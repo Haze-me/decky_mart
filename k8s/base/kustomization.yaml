@@ -3,11 +3,7 @@ kind: Kustomization
 namespace: solver-auth
 resources:
   - namespace.yaml
-  - deployment.yaml
   - configmap.yaml
+  - deployment.yaml
   - service.yaml
   - ingress.yaml
-images:
-  - name: app
-    newName: PLACEHOLDER
-    newTag: PLACEHOLDER
