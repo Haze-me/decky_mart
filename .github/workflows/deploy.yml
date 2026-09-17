@@ -1,4 +1,6 @@
- push:
+
+on:
+  push:
     branches: [main]
 jobs:
   deploy:
