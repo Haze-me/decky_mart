@@ -9,3 +9,4 @@ jobs:
       service_name: solver-auth
       namespace: solver-auth
     secrets: inherit
+    
