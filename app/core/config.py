@@ -40,6 +40,7 @@ class Settings(BaseSettings):
     
     COOKIE_DOMAIN: str
     COOKIE_SECURE: bool
+    COOKIE_SAMESITE: str
 
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=True)
 

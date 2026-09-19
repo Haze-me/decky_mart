@@ -11,6 +11,7 @@ data:
   FRONTEND_ORIGINS: "http://localhost:3000,http://localhost:5173,https://app.deckymart.com,https://admin.deckymart.com"
   COOKIE_DOMAIN: ".deckymart.com"
   COOKIE_SECURE: "True"
+  COOKIE_SAMESITE: "none"
   MAX_PROFILE_IMAGE_SIZE_MB: "5"
   MAX_ID_DOCUMENT_SIZE_MB: "5"
   MAX_SELFIE_SIZE_MB: "15"

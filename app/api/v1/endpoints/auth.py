@@ -215,8 +215,11 @@ async def logout(request: Request, response: Response, db: AsyncSession = Depend
 async def forgot_password(payload: ForgotPasswordRequest, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(User).where(User.email == payload.email))
     user = result.scalar_one_or_none()
+
+    generic_response = ForgotPasswordResponse(detail="If an account exists for this email, a reset code has been sent.")
+
     if not user:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
+        return generic_response
 
     otp_result = await db.execute(
         select(OTP)
@@ -228,12 +231,11 @@ async def forgot_password(payload: ForgotPasswordRequest, db: AsyncSession = Dep
     if latest_otp:
         elapsed = datetime.now(timezone.utc) - latest_otp.created_at
         if elapsed < timedelta(seconds=settings.OTP_RESEND_COOLDOWN_SECONDS):
-            wait = settings.OTP_RESEND_COOLDOWN_SECONDS - int(elapsed.total_seconds())
-            raise HTTPException(status_code=429, detail=f"Please wait {wait}s before requesting another code")
+            return generic_response
 
     await issue_otp(user, OTPPurpose.PASSWORD_RESET, db)
 
-    return ForgotPasswordResponse(detail="Password reset code sent")
+    return generic_response
 
 
 @router.post("/reset-password", response_model=ResetPasswordResponse)
