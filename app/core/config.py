@@ -33,7 +33,11 @@ class Settings(BaseSettings):
     MAX_ID_DOCUMENT_SIZE_MB: int
     MAX_SELFIE_SIZE_MB: int
     
-    FRONTEND_ORIGIN: str
+    FRONTEND_ORIGINS: str
+    @property
+    def frontend_origins_list(self) -> list[str]:
+        return [origin.strip() for origin in self.FRONTEND_ORIGINS.split(",") if origin.strip()]
+    
     COOKIE_DOMAIN: str
     COOKIE_SECURE: bool
 
