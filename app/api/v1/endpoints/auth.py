@@ -32,18 +32,25 @@ from app.schemas.auth import (
     ResetPasswordRequest,
     ResetPasswordResponse,
     VerifyEmailRequest,
+    GoogleAuthRequest,
 )
 from app.schemas.user import RegisterRequest, RegisterResponse, UserMeResponse
 from app.services.otp_service import issue_otp
 from app.services.session_service import issue_login_session
-
+from app.services.google_auth import GoogleTokenError, verify_google_id_token
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 @router.post("/register", response_model=RegisterResponse, status_code=status.HTTP_201_CREATED)
 async def register(payload: RegisterRequest, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(User).where(User.email == payload.email))
-    if result.scalar_one_or_none():
+    existing = result.scalar_one_or_none()
+    if existing:
+        if existing.google_id and not existing.hashed_password:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This email is registered via Google Sign-In. Please use 'Continue with Google' to log in, or use 'Forgot password' to set a password.",
+            )
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
 
     user = User(
@@ -143,8 +150,17 @@ async def resend_verification_code(payload: ResendVerificationRequest, db: Async
 async def login(payload: LoginRequest, response: Response, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(User).where(User.email == payload.email))
     user = result.scalar_one_or_none()
+    
+    if not user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
 
-    if not user or not verify_password(payload.password, user.hashed_password):
+    if user.google_id and not user.hashed_password:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="This email is registered via Google Sign-In. Please use 'Continue with Google' to log in, or use 'Forgot password' to set a password.",
+        )
+
+    if not verify_password(payload.password, user.hashed_password):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
 
     if user.account_status == AccountStatus.PENDING_EMAIL_VERIFICATION:
@@ -283,3 +299,49 @@ async def reset_password(payload: ResetPasswordRequest, db: AsyncSession = Depen
 @router.get("/user", response_model=UserMeResponse)
 async def get_own_user(current_user: User = Depends(get_current_user)):
     return current_user
+
+@router.post("/google", response_model=LoginResponse)
+async def google_auth(payload: GoogleAuthRequest, response: Response, db: AsyncSession = Depends(get_db)):
+    try:
+        google_data = verify_google_id_token(payload.id_token)
+    except GoogleTokenError as exc:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=f"Invalid Google token: {exc}")
+
+    google_id = google_data["sub"]
+    email = google_data["email"]
+    full_name = google_data.get("name")
+
+    result = await db.execute(select(User).where(User.google_id == google_id))
+    user = result.scalar_one_or_none()
+
+    if not user:
+        result = await db.execute(select(User).where(User.email == email))
+        existing_user = result.scalar_one_or_none()
+
+        if existing_user:
+            if existing_user.role != UserRole.SOLVER:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Google sign-in is only available for Solver accounts",
+                )
+            existing_user.google_id = google_id
+            user = existing_user
+        else:
+            user = User(
+                email=email,
+                full_name=full_name,
+                hashed_password=None,
+                google_id=google_id,
+                role=UserRole.SOLVER,
+                account_status=AccountStatus.PROFILE_INCOMPLETE,
+            )
+            db.add(user)
+
+        await db.commit()
+        await db.refresh(user)
+
+    await issue_login_session(user, response, db)
+
+    return LoginResponse(
+        id=user.id, email=user.email, role=user.role, account_status=user.account_status, message="Google sign-in successful"
+    )

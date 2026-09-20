@@ -62,3 +62,6 @@ class ResetPasswordRequest(BaseModel):
 
 class ResetPasswordResponse(BaseModel):
     detail: str
+    
+class GoogleAuthRequest(BaseModel):
+    id_token: str

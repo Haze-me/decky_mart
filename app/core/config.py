@@ -41,6 +41,8 @@ class Settings(BaseSettings):
     COOKIE_DOMAIN: str
     COOKIE_SECURE: bool
     COOKIE_SAMESITE: str
+    
+    GOOGLE_CLIENT_ID: str
 
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=True)
 

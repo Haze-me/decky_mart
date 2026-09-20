@@ -27,9 +27,11 @@ class User(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
+    google_id: Mapped[str | None] = mapped_column(String(255), unique=True, nullable=True, index=True)
     full_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
     phone_number: Mapped[str | None] = mapped_column(String(20), unique=True, nullable=True)
+    hashed_password: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     role: Mapped[UserRole] = mapped_column(Enum(UserRole, name="user_role"), nullable=False)
     account_status: Mapped[AccountStatus] = mapped_column(
