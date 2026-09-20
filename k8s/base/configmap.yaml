@@ -12,6 +12,7 @@ data:
   COOKIE_DOMAIN: ".deckymart.com"
   COOKIE_SECURE: "True"
   COOKIE_SAMESITE: "none"
+  GOOGLE_CLIENT_ID: 695846583551-lpuncgmkjm738gjrnsv7o5cviubuhbr8.apps.googleusercontent.com
   MAX_PROFILE_IMAGE_SIZE_MB: "5"
   MAX_ID_DOCUMENT_SIZE_MB: "5"
   MAX_SELFIE_SIZE_MB: "15"
