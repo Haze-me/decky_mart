@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.db.session import get_db
-from app.models.user import User, UserRole
+from app.models.user import AccountStatus, User, UserRole
 
 
 async def get_current_user(request: Request, db: AsyncSession = Depends(get_db)) -> User:
@@ -26,6 +26,9 @@ async def get_current_user(request: Request, db: AsyncSession = Depends(get_db))
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
 
+    if user.account_status == AccountStatus.BANNED:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Your account has been banned")
+
     return user
 
 
@@ -33,3 +36,12 @@ async def get_current_admin(current_user: User = Depends(get_current_user)) -> U
     if current_user.role != UserRole.ADMIN:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
     return current_user
+
+
+def ensure_not_suspended(user: User) -> None:
+    if user.account_status == AccountStatus.SUSPENDED:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Your account is suspended: {user.status_reason or 'contact support for details'}",
+        )
+        

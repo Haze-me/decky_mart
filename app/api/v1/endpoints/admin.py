@@ -1,33 +1,41 @@
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_admin
 from app.core.security import hash_password, verify_password
 from app.db.session import get_db
+from app.models.activity_log import ActivityAction, ActivityLog
 from app.models.kyc_document import KYCDocument, KYCReviewStatus
 from app.models.otp import OTPPurpose
+from app.models.refresh_token import RefreshToken
 from app.models.solver_profile import SolverProfile
 from app.models.user import AccountStatus, User, UserRole
 from app.schemas.admin import (
+    AccountActionResponse,
+    ActivityLogItem,
+    ActivityLogListResponse,
     AdminLoginRequest,
     AdminUserDetailResponse,
     CreateAdminRequest,
     CreateAdminResponse,
     KYCDocumentDetail,
+    OverviewResponse,
     ReviewAction,
     ReviewRequest,
     ReviewResponse,
     SolverListItem,
     SolverListResponse,
     SolverProfileDetail,
+    SuspendBanRequest,
 )
 from app.schemas.auth import LoginResponse
-from app.services.email import send_review_result_email
+from app.services.activity_log_service import ACTIVITY_TITLES, log_activity
+from app.services.email import send_account_status_email, send_review_result_email
 from app.services.otp_service import issue_otp
 from app.services.session_service import issue_login_session
 from app.services.storage import build_public_url, generate_presigned_get_url
@@ -225,13 +233,18 @@ async def review_solver(
         user.account_status = AccountStatus.ACTIVE
         kyc.review_status = KYCReviewStatus.APPROVED
         kyc.rejection_reason = None
+        activity_action = ActivityAction.KYC_APPROVED
     else:
         user.account_status = AccountStatus.REJECTED
         kyc.review_status = KYCReviewStatus.REJECTED
         kyc.rejection_reason = payload.rejection_reason
+        activity_action = ActivityAction.KYC_REJECTED
 
+    user.status_changed_at = now
     kyc.reviewed_by = current_admin.id
     kyc.reviewed_at = now
+
+    await log_activity(db, current_admin, user, activity_action, payload.rejection_reason)
 
     await db.commit()
 
@@ -241,3 +254,166 @@ async def review_solver(
         logger.error("Failed to send review result email to %s: %s", user.email, exc)
 
     return ReviewResponse(id=user.id, account_status=user.account_status, message=f"User {'approved' if approved else 'rejected'}")
+
+
+@router.get("/admin/overview", response_model=OverviewResponse)
+async def get_overview(
+    current_admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    week_ago = datetime.now(timezone.utc) - timedelta(days=7)
+
+    total_solvers = (await db.execute(
+        select(func.count()).select_from(User).where(User.role == UserRole.SOLVER)
+    )).scalar_one()
+
+    total_new = (await db.execute(
+        select(func.count()).select_from(User).where(User.role == UserRole.SOLVER, User.created_at >= week_ago)
+    )).scalar_one()
+
+    pending_kyc = (await db.execute(
+        select(func.count()).select_from(User).where(User.account_status == AccountStatus.PENDING_REVIEW)
+    )).scalar_one()
+
+    active_solvers = (await db.execute(
+        select(func.count()).select_from(User).where(User.role == UserRole.SOLVER, User.account_status == AccountStatus.ACTIVE)
+    )).scalar_one()
+
+    active_new = (await db.execute(
+        select(func.count()).select_from(User).where(
+            User.role == UserRole.SOLVER,
+            User.account_status == AccountStatus.ACTIVE,
+            User.status_changed_at >= week_ago,
+        )
+    )).scalar_one()
+
+    return OverviewResponse(
+        total_solvers=total_solvers,
+        total_solvers_new_this_week=total_new,
+        pending_kyc=pending_kyc,
+        active_solvers=active_solvers,
+        active_solvers_new_this_week=active_new,
+    )
+
+
+@router.get("/admin/activity-log", response_model=ActivityLogListResponse)
+async def get_activity_log(
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
+    current_admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    total = (await db.execute(select(func.count()).select_from(ActivityLog))).scalar_one()
+
+    offset = (page - 1) * limit
+    result = await db.execute(
+        select(ActivityLog).order_by(ActivityLog.created_at.desc()).offset(offset).limit(limit)
+    )
+    logs = result.scalars().all()
+
+    items = []
+    for log in logs:
+        actor_name = None
+        if log.actor_id:
+            actor_result = await db.execute(select(User).where(User.id == log.actor_id))
+            actor = actor_result.scalar_one_or_none()
+            actor_name = actor.full_name if actor else None
+
+        items.append(
+            ActivityLogItem(
+                id=log.id,
+                action=log.action.value,
+                title=ACTIVITY_TITLES.get(log.action, log.action.value),
+                description=log.description,
+                actor_name=actor_name,
+                created_at=log.created_at,
+            )
+        )
+
+    return ActivityLogListResponse(total=total, page=page, limit=limit, items=items)
+
+
+async def _apply_account_action(
+    user_id: uuid.UUID,
+    new_status: AccountStatus,
+    activity_action: ActivityAction,
+    reason: str | None,
+    current_admin: User,
+    db: AsyncSession,
+) -> User:
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    if user.role != UserRole.SOLVER:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This action only applies to Solver accounts")
+
+    user.account_status = new_status
+    user.status_reason = reason
+    user.status_changed_at = datetime.now(timezone.utc)
+
+    if new_status in (AccountStatus.SUSPENDED, AccountStatus.BANNED):
+        await db.execute(
+            update(RefreshToken).where(RefreshToken.user_id == user.id, RefreshToken.is_revoked == False).values(is_revoked=True)
+        )
+
+    await log_activity(db, current_admin, user, activity_action, reason)
+    await db.commit()
+
+    try:
+        send_account_status_email(user.email, new_status.value, reason)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Failed to send account status email to %s: %s", user.email, exc)
+
+    return user
+
+
+@router.patch("/user/{user_id}/suspend", response_model=AccountActionResponse)
+async def suspend_solver(
+    user_id: uuid.UUID,
+    payload: SuspendBanRequest,
+    current_admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    user = await _apply_account_action(user_id, AccountStatus.SUSPENDED, ActivityAction.SUSPENDED, payload.reason, current_admin, db)
+    return AccountActionResponse(id=user.id, account_status=user.account_status, message="Solver suspended")
+
+
+@router.patch("/user/{user_id}/ban", response_model=AccountActionResponse)
+async def ban_solver(
+    user_id: uuid.UUID,
+    payload: SuspendBanRequest,
+    current_admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    user = await _apply_account_action(user_id, AccountStatus.BANNED, ActivityAction.BANNED, payload.reason, current_admin, db)
+    return AccountActionResponse(id=user.id, account_status=user.account_status, message="Solver banned")
+
+
+@router.patch("/user/{user_id}/activate", response_model=AccountActionResponse)
+async def activate_solver(
+    user_id: uuid.UUID,
+    current_admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    if user.account_status not in (AccountStatus.SUSPENDED, AccountStatus.BANNED):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="User is not suspended or banned")
+
+    user.account_status = AccountStatus.ACTIVE
+    user.status_reason = None
+    user.status_changed_at = datetime.now(timezone.utc)
+
+    await log_activity(db, current_admin, user, ActivityAction.ACTIVATED)
+    await db.commit()
+
+    try:
+        send_account_status_email(user.email, "activated")
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Failed to send account status email to %s: %s", user.email, exc)
+
+    return AccountActionResponse(id=user.id, account_status=user.account_status, message="Solver reactivated")

@@ -3,13 +3,20 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user
+from app.api.deps import ensure_not_suspended, get_current_user
 from app.db.session import get_db
 from app.models.kyc_document import KYCDocument, KYCReviewStatus
 from app.models.solver_profile import SolverProfile
 from app.models.user import AccountStatus, User
-from app.schemas.profile import ProfileDetailResponse, ProfileSolverDetail, ProfileKYCDetail, ProfileUpdateRequest, ProfileUpdateResponse
+from app.schemas.profile import (
+    ProfileDetailResponse,
+    ProfileKYCDetail,
+    ProfileSolverDetail,
+    ProfileUpdateRequest,
+    ProfileUpdateResponse,
+)
 from app.services.storage import FileValidationError, build_public_url, delete_file, validate_and_upload
+
 router = APIRouter(prefix="/auth", tags=["profile"])
 
 REQUIRED_FIELDS = {
@@ -17,6 +24,7 @@ REQUIRED_FIELDS = {
     "nationality", "category", "latitude", "longitude",
     "radius_km", "working_experience",
 }
+
 
 @router.get("/profile", response_model=ProfileDetailResponse)
 async def get_own_profile(
@@ -69,12 +77,15 @@ async def get_own_profile(
         kyc_status=kyc_detail,
     )
 
+
 @router.patch("/profile", response_model=ProfileUpdateResponse)
 async def update_profile(
     payload: ProfileUpdateRequest,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    ensure_not_suspended(current_user)
+
     result = await db.execute(select(SolverProfile).where(SolverProfile.user_id == current_user.id))
     profile = result.scalar_one_or_none()
     if not profile:
@@ -113,6 +124,7 @@ async def update_profile(
 
     return ProfileUpdateResponse(detail="Profile updated. Pending re-review.", account_status=current_user.account_status)
 
+
 @router.patch("/profile/files", response_model=ProfileUpdateResponse)
 async def update_profile_files(
     profile_image: UploadFile | None = File(None),
@@ -121,6 +133,8 @@ async def update_profile_files(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    ensure_not_suspended(current_user)
+
     if not any([profile_image, id_document, selfie]):
         raise HTTPException(status_code=400, detail="At least one file must be provided")
 

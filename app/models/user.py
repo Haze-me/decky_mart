@@ -2,9 +2,9 @@ import uuid
 import enum
 from datetime import datetime
 
-from sqlalchemy import String, Enum, func
+from sqlalchemy import String, Enum, func, Text, DateTime
 from sqlalchemy.orm import Mapped, mapped_column
-
+from datetime import datetime
 from app.db.base import Base
 
 
@@ -20,6 +20,8 @@ class AccountStatus(str, enum.Enum):
     PENDING_REVIEW = "pending_review"
     ACTIVE = "active"
     REJECTED = "rejected"
+    SUSPENDED = "suspended"
+    BANNED = "banned"
 
 
 class User(Base):
@@ -39,6 +41,8 @@ class User(Base):
         nullable=False,
         default=AccountStatus.PENDING_EMAIL_VERIFICATION,
     )
-
-    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
+    
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    status_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

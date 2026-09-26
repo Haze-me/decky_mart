@@ -44,3 +44,28 @@ def send_review_result_email(to_email: str, approved: bool, rejection_reason: st
     result = mailjet.send.create(data=data)
     if result.status_code != 200:
         raise RuntimeError(f"Mailjet send failed: {result.status_code} {result.json()}")
+    
+def send_account_status_email(to_email: str, status: str, reason: str | None = None) -> None:
+    if status == "suspended":
+        subject = "Your SolveMart account has been suspended"
+        text_body = f"Your account has been suspended. Reason: {reason}. You can still view your account, but some features are restricted."
+    elif status == "banned":
+        subject = "Your SolveMart account has been banned"
+        text_body = f"Your account has been banned. Reason: {reason}. Please contact support if you believe this is a mistake."
+    else:
+        subject = "Your SolveMart account has been reactivated"
+        text_body = "Your account has been reactivated and you now have full access again."
+
+    data = {
+        "Messages": [
+            {
+                "From": {"Email": settings.MAILJET_SENDER_EMAIL, "Name": "SolveMart"},
+                "To": [{"Email": to_email}],
+                "Subject": subject,
+                "TextPart": text_body,
+            }
+        ]
+    }
+    result = mailjet.send.create(data=data)
+    if result.status_code != 200:
+        raise RuntimeError(f"Mailjet send failed: {result.status_code} {result.json()}")    

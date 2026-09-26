@@ -6,7 +6,7 @@ from pydantic import BaseModel, EmailStr, Field, model_validator
 
 from app.models.kyc_document import KYCReviewStatus
 from app.models.user import AccountStatus, UserRole
-
+from datetime import datetime as dt
 
 class SolverProfileDetail(BaseModel):
     profile_image_url: str
@@ -118,3 +118,38 @@ class SolverListResponse(BaseModel):
     page: int
     limit: int
     solvers: list[SolverListItem]
+    
+
+
+class OverviewResponse(BaseModel):
+    total_solvers: int
+    total_solvers_new_this_week: int
+    pending_kyc: int
+    active_solvers: int
+    active_solvers_new_this_week: int
+
+
+class ActivityLogItem(BaseModel):
+    id: uuid.UUID
+    action: str
+    title: str
+    description: str
+    actor_name: str | None
+    created_at: dt
+
+
+class ActivityLogListResponse(BaseModel):
+    total: int
+    page: int
+    limit: int
+    items: list[ActivityLogItem]
+
+
+class SuspendBanRequest(BaseModel):
+    reason: str = Field(min_length=3, max_length=500)
+
+
+class AccountActionResponse(BaseModel):
+    id: uuid.UUID
+    account_status: AccountStatus
+    message: str

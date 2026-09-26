@@ -1,10 +1,9 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import String, Text, ForeignKey, DateTime, func
+from sqlalchemy import String, Text, Float, Integer, ForeignKey, DateTime, func
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Mapped, mapped_column
-from sqlalchemy import String, Text, Float, Integer, ForeignKey, DateTime, func
 
 from app.db.base import Base
 
