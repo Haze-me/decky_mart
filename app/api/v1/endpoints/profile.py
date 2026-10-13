@@ -4,6 +4,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import ensure_not_suspended, get_current_user
+from app.core.csrf import verify_csrf
 from app.db.session import get_db
 from app.models.kyc_document import KYCDocument, KYCReviewStatus
 from app.models.solver_profile import SolverProfile
@@ -78,7 +79,7 @@ async def get_own_profile(
     )
 
 
-@router.patch("/profile", response_model=ProfileUpdateResponse)
+@router.patch("/profile", response_model=ProfileUpdateResponse, dependencies=[Depends(verify_csrf)])
 async def update_profile(
     payload: ProfileUpdateRequest,
     current_user: User = Depends(get_current_user),
@@ -125,7 +126,7 @@ async def update_profile(
     return ProfileUpdateResponse(detail="Profile updated. Pending re-review.", account_status=current_user.account_status)
 
 
-@router.patch("/profile/files", response_model=ProfileUpdateResponse)
+@router.patch("/profile/files", response_model=ProfileUpdateResponse, dependencies=[Depends(verify_csrf)])
 async def update_profile_files(
     profile_image: UploadFile | None = File(None),
     id_document: UploadFile | None = File(None),

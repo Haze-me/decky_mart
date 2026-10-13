@@ -2,16 +2,19 @@ import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_admin
+from app.core.csrf import verify_csrf
+from app.core.limiter import limiter
 from app.core.security import hash_password, verify_password
 from app.db.session import get_db
 from app.models.activity_log import ActivityAction, ActivityLog
 from app.models.kyc_document import KYCDocument, KYCReviewStatus
 from app.models.otp import OTPPurpose
+from app.models.post import Post
 from app.models.refresh_token import RefreshToken
 from app.models.solver_profile import SolverProfile
 from app.models.user import AccountStatus, User, UserRole
@@ -23,8 +26,10 @@ from app.schemas.admin import (
     AdminUserDetailResponse,
     CreateAdminRequest,
     CreateAdminResponse,
+    DeletePostRequest,
     KYCDocumentDetail,
     OverviewResponse,
+    PostModerationResponse,
     ReviewAction,
     ReviewRequest,
     ReviewResponse,
@@ -37,6 +42,7 @@ from app.schemas.auth import LoginResponse
 from app.services.activity_log_service import ACTIVITY_TITLES, log_activity
 from app.services.email import send_account_status_email, send_review_result_email
 from app.services.otp_service import issue_otp
+from app.services.post_service import delete_post_and_media
 from app.services.session_service import issue_login_session
 from app.services.storage import build_public_url, generate_presigned_get_url
 
@@ -45,7 +51,12 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/auth", tags=["admin"])
 
 
-@router.post("/admin/create-admin", response_model=CreateAdminResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/admin/create-admin",
+    response_model=CreateAdminResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(verify_csrf)],
+)
 async def create_admin(
     payload: CreateAdminRequest,
     current_admin: User = Depends(get_current_admin),
@@ -78,7 +89,8 @@ async def create_admin(
 
 
 @router.post("/admin/login", response_model=LoginResponse)
-async def admin_login(payload: AdminLoginRequest, response: Response, db: AsyncSession = Depends(get_db)):
+@limiter.limit("5/minute")
+async def admin_login(request: Request, payload: AdminLoginRequest, response: Response, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(User).where(User.email == payload.email))
     user = result.scalar_one_or_none()
 
@@ -206,7 +218,7 @@ async def get_user_by_id(
     )
 
 
-@router.patch("/user/{user_id}/review", response_model=ReviewResponse)
+@router.patch("/user/{user_id}/review", response_model=ReviewResponse, dependencies=[Depends(verify_csrf)])
 async def review_solver(
     user_id: uuid.UUID,
     payload: ReviewRequest,
@@ -349,14 +361,16 @@ async def _apply_account_action(
     if user.role != UserRole.SOLVER:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This action only applies to Solver accounts")
 
+    if user.account_status not in (AccountStatus.SUSPENDED, AccountStatus.BANNED):
+        user.previous_status = user.account_status
+
     user.account_status = new_status
     user.status_reason = reason
     user.status_changed_at = datetime.now(timezone.utc)
 
-    if new_status in (AccountStatus.SUSPENDED, AccountStatus.BANNED):
-        await db.execute(
-            update(RefreshToken).where(RefreshToken.user_id == user.id, RefreshToken.is_revoked == False).values(is_revoked=True)
-        )
+    await db.execute(
+        update(RefreshToken).where(RefreshToken.user_id == user.id, RefreshToken.is_revoked == False).values(is_revoked=True)
+    )
 
     await log_activity(db, current_admin, user, activity_action, reason)
     await db.commit()
@@ -369,7 +383,7 @@ async def _apply_account_action(
     return user
 
 
-@router.patch("/user/{user_id}/suspend", response_model=AccountActionResponse)
+@router.patch("/user/{user_id}/suspend", response_model=AccountActionResponse, dependencies=[Depends(verify_csrf)])
 async def suspend_solver(
     user_id: uuid.UUID,
     payload: SuspendBanRequest,
@@ -380,7 +394,7 @@ async def suspend_solver(
     return AccountActionResponse(id=user.id, account_status=user.account_status, message="Solver suspended")
 
 
-@router.patch("/user/{user_id}/ban", response_model=AccountActionResponse)
+@router.patch("/user/{user_id}/ban", response_model=AccountActionResponse, dependencies=[Depends(verify_csrf)])
 async def ban_solver(
     user_id: uuid.UUID,
     payload: SuspendBanRequest,
@@ -391,7 +405,22 @@ async def ban_solver(
     return AccountActionResponse(id=user.id, account_status=user.account_status, message="Solver banned")
 
 
-@router.patch("/user/{user_id}/activate", response_model=AccountActionResponse)
+async def _restore_status(user: User, db: AsyncSession) -> AccountStatus:
+    if user.previous_status and user.previous_status not in (AccountStatus.SUSPENDED, AccountStatus.BANNED):
+        return user.previous_status
+
+    kyc_result = await db.execute(select(KYCDocument).where(KYCDocument.user_id == user.id))
+    kyc = kyc_result.scalar_one_or_none()
+    if not kyc:
+        return AccountStatus.PROFILE_INCOMPLETE
+    if kyc.review_status == KYCReviewStatus.APPROVED:
+        return AccountStatus.ACTIVE
+    if kyc.review_status == KYCReviewStatus.REJECTED:
+        return AccountStatus.REJECTED
+    return AccountStatus.PENDING_REVIEW
+
+
+@router.patch("/user/{user_id}/activate", response_model=AccountActionResponse, dependencies=[Depends(verify_csrf)])
 async def activate_solver(
     user_id: uuid.UUID,
     current_admin: User = Depends(get_current_admin),
@@ -404,7 +433,10 @@ async def activate_solver(
     if user.account_status not in (AccountStatus.SUSPENDED, AccountStatus.BANNED):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="User is not suspended or banned")
 
-    user.account_status = AccountStatus.ACTIVE
+    restored = await _restore_status(user, db)
+
+    user.account_status = restored
+    user.previous_status = None
     user.status_reason = None
     user.status_changed_at = datetime.now(timezone.utc)
 
@@ -412,8 +444,33 @@ async def activate_solver(
     await db.commit()
 
     try:
-        send_account_status_email(user.email, "activated")
+        send_account_status_email(user.email, "activated", restored_status=restored.value)
     except Exception as exc:  # noqa: BLE001
         logger.error("Failed to send account status email to %s: %s", user.email, exc)
 
-    return AccountActionResponse(id=user.id, account_status=user.account_status, message="Solver reactivated")
+    return AccountActionResponse(
+        id=user.id,
+        account_status=user.account_status,
+        message=f"Restriction lifted. Account restored to {restored.value}",
+    )
+
+
+@router.delete("/admin/posts/{post_id}", response_model=PostModerationResponse, dependencies=[Depends(verify_csrf)])
+async def delete_post_as_admin(
+    post_id: uuid.UUID,
+    payload: DeletePostRequest,
+    current_admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(Post).where(Post.id == post_id))
+    post = result.scalar_one_or_none()
+    if not post:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Post not found")
+
+    author_result = await db.execute(select(User).where(User.id == post.author_id))
+    author = author_result.scalar_one_or_none()
+
+    await log_activity(db, current_admin, author, ActivityAction.POST_DELETED, f'"{post.title}": {payload.reason}')
+    await delete_post_and_media(db, post)
+
+    return PostModerationResponse(detail="Post deleted")

@@ -14,6 +14,7 @@ class ActivityAction(str, enum.Enum):
     SUSPENDED = "suspended"
     BANNED = "banned"
     ACTIVATED = "activated"
+    POST_DELETED = "post_deleted"
 
 
 class ActivityLog(Base):

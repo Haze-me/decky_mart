@@ -5,6 +5,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
+from app.core.csrf import verify_csrf
 from app.db.session import get_db
 from app.models.kyc_document import KYCDocument
 from app.models.solver_profile import SolverProfile
@@ -15,7 +16,7 @@ from app.services.storage import FileValidationError, validate_and_upload
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
-@router.post("/complete-registration", response_model=CompleteRegistrationResponse)
+@router.post("/complete-registration", response_model=CompleteRegistrationResponse, dependencies=[Depends(verify_csrf)])
 async def complete_registration(
     phone_number: str = Form(...),
     contact_address: str = Form(...),

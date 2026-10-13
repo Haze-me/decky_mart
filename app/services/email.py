@@ -44,8 +44,11 @@ def send_review_result_email(to_email: str, approved: bool, rejection_reason: st
     result = mailjet.send.create(data=data)
     if result.status_code != 200:
         raise RuntimeError(f"Mailjet send failed: {result.status_code} {result.json()}")
-    
-def send_account_status_email(to_email: str, status: str, reason: str | None = None) -> None:
+
+
+def send_account_status_email(
+    to_email: str, status: str, reason: str | None = None, restored_status: str | None = None
+) -> None:
     if status == "suspended":
         subject = "Your SolveMart account has been suspended"
         text_body = f"Your account has been suspended. Reason: {reason}. You can still view your account, but some features are restricted."
@@ -53,8 +56,15 @@ def send_account_status_email(to_email: str, status: str, reason: str | None = N
         subject = "Your SolveMart account has been banned"
         text_body = f"Your account has been banned. Reason: {reason}. Please contact support if you believe this is a mistake."
     else:
-        subject = "Your SolveMart account has been reactivated"
-        text_body = "Your account has been reactivated and you now have full access again."
+        subject = "Your SolveMart account restriction has been lifted"
+        if restored_status == "active":
+            text_body = "Your account has been reactivated and you now have full access again."
+        elif restored_status == "pending_review":
+            text_body = "Your account restriction has been lifted. Your account is still awaiting review before it goes live."
+        elif restored_status == "rejected":
+            text_body = "Your restriction has been lifted. Your earlier submission was not approved. Please update your profile and resubmit."
+        else:
+            text_body = "Your account restriction has been lifted. Please log in to continue your registration."
 
     data = {
         "Messages": [
@@ -68,4 +78,4 @@ def send_account_status_email(to_email: str, status: str, reason: str | None = N
     }
     result = mailjet.send.create(data=data)
     if result.status_code != 200:
-        raise RuntimeError(f"Mailjet send failed: {result.status_code} {result.json()}")    
+        raise RuntimeError(f"Mailjet send failed: {result.status_code} {result.json()}")

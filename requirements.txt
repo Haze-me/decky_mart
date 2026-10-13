@@ -50,6 +50,7 @@ python-dotenv==1.2.3
 python-jose==3.5.0
 python-multipart==0.0.32
 PyYAML==6.0.3
+redis==8.1.0
 requests==2.34.2
 rsa==4.9.1
 s3transfer==0.19.2
@@ -61,7 +62,7 @@ typing-inspection==0.4.4
 typing_extensions==4.16.0
 urllib3==2.8.0
 uvicorn==0.53.0
-uvloop==0.22.1
+uvloop==0.22.1; sys_platform != "win32"
 watchfiles==1.2.0
 websockets==17.1
 wrapt==2.4.1

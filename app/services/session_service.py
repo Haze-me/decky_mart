@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.cookies import set_auth_cookies
+from app.core.csrf import generate_csrf_token, set_csrf_cookie
 from app.core.security import create_access_token, generate_refresh_token, hash_refresh_token
 from app.models.refresh_token import RefreshToken
 from app.models.user import User
@@ -25,3 +26,4 @@ async def issue_login_session(user: User, response: Response, db: AsyncSession) 
     await db.commit()
 
     set_auth_cookies(response, access_token, refresh_token_plain)
+    set_csrf_cookie(response, generate_csrf_token())

@@ -4,6 +4,7 @@ import boto3
 from botocore.config import Config
 from fastapi import UploadFile
 from app.core.config import settings
+from app.models.post import PostMediaType
 
 import logging
 logger = logging.getLogger(__name__)
@@ -60,6 +61,46 @@ async def validate_and_upload(user_id: str, file_type: str, upload: UploadFile) 
     )
 
     return key
+
+POST_IMAGE_CONTENT_TYPES = {"image/jpeg": "jpg", "image/png": "png"}
+POST_VIDEO_CONTENT_TYPES = {"video/mp4": "mp4", "video/quicktime": "mov"}
+
+
+async def validate_and_upload_post_media(user_id: str, upload: UploadFile) -> tuple[PostMediaType, str]:
+    """Validates and uploads a single post image/video. Images are uploaded straight to the
+    public post-media/images/ prefix (ready immediately).
+
+    Video is intentionally rejected for now: there is no transcoding pipeline yet, so a video
+    upload would succeed but sit at processing_status=PENDING forever with no playable URL.
+    Re-enabling it is just removing this branch once MediaConvert is wired up — the private
+    post-media/videos/raw/ prefix and PostMediaType.VIDEO plumbing are already in place.
+    """
+    if upload.content_type in POST_IMAGE_CONTENT_TYPES:
+        media_type = PostMediaType.IMAGE
+        ext = POST_IMAGE_CONTENT_TYPES[upload.content_type]
+        max_size_bytes = settings.MAX_POST_IMAGE_SIZE_MB * 1024 * 1024
+        prefix = "post-media/images"
+    elif upload.content_type in POST_VIDEO_CONTENT_TYPES:
+        raise FileValidationError("Video posts aren't available yet — please upload images only")
+    else:
+        raise FileValidationError("Only JPG/PNG images are allowed")
+
+    contents = await upload.read()
+    if len(contents) > max_size_bytes:
+        limit_mb = settings.MAX_POST_IMAGE_SIZE_MB if media_type == PostMediaType.IMAGE else settings.MAX_POST_VIDEO_SIZE_MB
+        raise FileValidationError(f"{media_type.value}: file exceeds {limit_mb}MB limit")
+
+    key = f"{prefix}/{user_id}/{uuid.uuid4()}.{ext}"
+
+    s3_client.put_object(
+        Bucket=settings.AWS_S3_BUCKET,
+        Key=key,
+        Body=contents,
+        ContentType=upload.content_type,
+    )
+
+    return media_type, key
+
 
 def delete_file(key: str) -> None:
     try:

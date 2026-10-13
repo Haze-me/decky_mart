@@ -8,11 +8,17 @@ class Settings(BaseSettings):
 
     DATABASE_URL: str
 
+    REDIS_URL: str
+
     JWT_SECRET_KEY: str
     JWT_ALGORITHM: str
     ACCESS_TOKEN_EXPIRE_MINUTES: int
     REFRESH_TOKEN_EXPIRE_DAYS: int
     REGISTRATION_TOKEN_EXPIRE_MINUTES: int
+
+    # Verify-only: signs the customer service's access tokens (cust_access cookie). We never mint
+    # tokens with this key, only verify. Shared with us out-of-band by the customer-service team.
+    CUSTOMER_TOKEN_SIGNING_KEY: str
 
     MAILJET_API_KEY: str
     MAILJET_API_SECRET: str
@@ -32,6 +38,9 @@ class Settings(BaseSettings):
     MAX_PROFILE_IMAGE_SIZE_MB: int
     MAX_ID_DOCUMENT_SIZE_MB: int
     MAX_SELFIE_SIZE_MB: int
+    MAX_POST_IMAGE_SIZE_MB: int
+    MAX_POST_VIDEO_SIZE_MB: int
+    MAX_POST_MEDIA_ITEMS: int
     
     FRONTEND_ORIGINS: str
     @property

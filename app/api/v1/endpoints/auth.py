@@ -8,6 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_user
 from app.core.config import settings
 from app.core.cookies import REFRESH_TOKEN_COOKIE, clear_auth_cookies, set_auth_cookies
+from app.core.csrf import clear_csrf_cookie, verify_csrf
+from app.core.limiter import limiter
 from app.core.security import (
     create_access_token,
     generate_refresh_token,
@@ -43,7 +45,8 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 @router.post("/register", response_model=RegisterResponse, status_code=status.HTTP_201_CREATED)
-async def register(payload: RegisterRequest, db: AsyncSession = Depends(get_db)):
+@limiter.limit("3/hour")
+async def register(request: Request, response: Response, payload: RegisterRequest, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(User).where(User.email == payload.email))
     existing = result.scalar_one_or_none()
     if existing:
@@ -71,7 +74,8 @@ async def register(payload: RegisterRequest, db: AsyncSession = Depends(get_db))
 
 
 @router.post("/verify-email", response_model=LoginResponse)
-async def verify_email(payload: VerifyEmailRequest, response: Response, db: AsyncSession = Depends(get_db)):
+@limiter.limit("10/hour")
+async def verify_email(request: Request, payload: VerifyEmailRequest, response: Response, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(User).where(User.email == payload.email))
     user = result.scalar_one_or_none()
     if not user:
@@ -120,7 +124,10 @@ async def verify_email(payload: VerifyEmailRequest, response: Response, db: Asyn
 
 
 @router.post("/resend-verification-code", response_model=ResendVerificationResponse)
-async def resend_verification_code(payload: ResendVerificationRequest, db: AsyncSession = Depends(get_db)):
+@limiter.limit("3/hour")
+async def resend_verification_code(
+    request: Request, response: Response, payload: ResendVerificationRequest, db: AsyncSession = Depends(get_db)
+):
     result = await db.execute(select(User).where(User.email == payload.email))
     user = result.scalar_one_or_none()
     if not user:
@@ -148,7 +155,8 @@ async def resend_verification_code(payload: ResendVerificationRequest, db: Async
 
 
 @router.post("/login", response_model=LoginResponse)
-async def login(payload: LoginRequest, response: Response, db: AsyncSession = Depends(get_db)):
+@limiter.limit("5/minute")
+async def login(request: Request, payload: LoginRequest, response: Response, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(User).where(User.email == payload.email))
     user = result.scalar_one_or_none()
 
@@ -178,6 +186,7 @@ async def login(payload: LoginRequest, response: Response, db: AsyncSession = De
     return LoginResponse(id=user.id, email=user.email, role=user.role, account_status=user.account_status, message="Login successful")
 
 
+
 @router.post("/google", response_model=LoginResponse)
 async def google_auth(payload: GoogleAuthRequest, response: Response, db: AsyncSession = Depends(get_db)):
     try:
@@ -202,6 +211,27 @@ async def google_auth(payload: GoogleAuthRequest, response: Response, db: AsyncS
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="Google sign-in is only available for Solver accounts",
                 )
+
+            if existing_user.account_status == AccountStatus.BANNED:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"Your account has been banned: {existing_user.status_reason or 'contact support'}",
+                )
+
+            if existing_user.account_status == AccountStatus.PENDING_EMAIL_VERIFICATION:
+                existing_user.hashed_password = None
+                existing_user.account_status = AccountStatus.PROFILE_INCOMPLETE
+                if full_name:
+                    existing_user.full_name = full_name
+                await db.execute(
+                    update(OTP).where(OTP.user_id == existing_user.id, OTP.is_used == False).values(is_used=True)
+                )
+                await db.execute(
+                    update(RefreshToken)
+                    .where(RefreshToken.user_id == existing_user.id, RefreshToken.is_revoked == False)
+                    .values(is_revoked=True)
+                )
+
             existing_user.google_id = google_id
             user = existing_user
         else:
@@ -231,7 +261,7 @@ async def google_auth(payload: GoogleAuthRequest, response: Response, db: AsyncS
     )
 
 
-@router.post("/refresh", response_model=RefreshResponse)
+@router.post("/refresh", response_model=RefreshResponse, dependencies=[Depends(verify_csrf)])
 async def refresh_tokens(request: Request, response: Response, db: AsyncSession = Depends(get_db)):
     raw_token = request.cookies.get(REFRESH_TOKEN_COOKIE)
     if not raw_token:
@@ -271,7 +301,7 @@ async def refresh_tokens(request: Request, response: Response, db: AsyncSession 
     return RefreshResponse(detail="Token refreshed")
 
 
-@router.post("/logout", response_model=LogoutResponse)
+@router.post("/logout", response_model=LogoutResponse, dependencies=[Depends(verify_csrf)])
 async def logout(request: Request, response: Response, db: AsyncSession = Depends(get_db)):
     raw_token = request.cookies.get(REFRESH_TOKEN_COOKIE)
     if raw_token:
@@ -283,12 +313,14 @@ async def logout(request: Request, response: Response, db: AsyncSession = Depend
             await db.commit()
 
     clear_auth_cookies(response)
+    clear_csrf_cookie(response)
 
     return LogoutResponse(detail="Logged out")
 
 
 @router.post("/forgot-password", response_model=ForgotPasswordResponse)
-async def forgot_password(payload: ForgotPasswordRequest, db: AsyncSession = Depends(get_db)):
+@limiter.limit("3/hour")
+async def forgot_password(request: Request, response: Response, payload: ForgotPasswordRequest, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(User).where(User.email == payload.email))
     user = result.scalar_one_or_none()
 
@@ -315,7 +347,8 @@ async def forgot_password(payload: ForgotPasswordRequest, db: AsyncSession = Dep
 
 
 @router.post("/reset-password", response_model=ResetPasswordResponse)
-async def reset_password(payload: ResetPasswordRequest, db: AsyncSession = Depends(get_db)):
+@limiter.limit("5/hour")
+async def reset_password(request: Request, response: Response, payload: ResetPasswordRequest, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(User).where(User.email == payload.email))
     user = result.scalar_one_or_none()
     if not user:

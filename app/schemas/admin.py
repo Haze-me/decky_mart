@@ -153,3 +153,11 @@ class AccountActionResponse(BaseModel):
     id: uuid.UUID
     account_status: AccountStatus
     message: str
+
+
+class DeletePostRequest(BaseModel):
+    reason: str = Field(min_length=3, max_length=500)
+
+
+class PostModerationResponse(BaseModel):
+    detail: str

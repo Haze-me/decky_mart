@@ -9,6 +9,7 @@ ACTIVITY_TITLES = {
     ActivityAction.SUSPENDED: "Account Suspended",
     ActivityAction.BANNED: "Account Banned",
     ActivityAction.ACTIVATED: "Account Activated",
+    ActivityAction.POST_DELETED: "Post Removed",
 }
 
 
@@ -24,6 +25,8 @@ def _build_description(action: ActivityAction, target: User, reason: str | None)
         return f"{name} banned for {reason}"
     if action == ActivityAction.ACTIVATED:
         return f"{name} reactivated"
+    if action == ActivityAction.POST_DELETED:
+        return f"{name}'s post removed: {reason}"
     return f"{name} — {action.value}"
 
 
