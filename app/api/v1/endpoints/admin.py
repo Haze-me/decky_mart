@@ -263,7 +263,7 @@ async def review_solver(
     try:
         send_review_result_email(user.email, approved, payload.rejection_reason)
     except Exception as exc:  # noqa: BLE001
-        logger.error("Failed to send review result email to %s: %s", user.email, exc)
+        logger.error("Failed to send review result email to user %s: %s", user.id, exc)
 
     return ReviewResponse(id=user.id, account_status=user.account_status, message=f"User {'approved' if approved else 'rejected'}")
 
@@ -378,7 +378,7 @@ async def _apply_account_action(
     try:
         send_account_status_email(user.email, new_status.value, reason)
     except Exception as exc:  # noqa: BLE001
-        logger.error("Failed to send account status email to %s: %s", user.email, exc)
+        logger.error("Failed to send account status email to user %s: %s", user.id, exc)
 
     return user
 
@@ -446,7 +446,7 @@ async def activate_solver(
     try:
         send_account_status_email(user.email, "activated", restored_status=restored.value)
     except Exception as exc:  # noqa: BLE001
-        logger.error("Failed to send account status email to %s: %s", user.email, exc)
+        logger.error("Failed to send account status email to user %s: %s", user.id, exc)
 
     return AccountActionResponse(
         id=user.id,

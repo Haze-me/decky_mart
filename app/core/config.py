@@ -5,6 +5,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     PROJECT_NAME: str
     ENVIRONMENT: str
+    # DEBUG, INFO, WARNING, ERROR. Logs are JSON on stdout (for Promtail/Loki).
+    LOG_LEVEL: str = "INFO"
 
     DATABASE_URL: str
 

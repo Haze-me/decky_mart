@@ -33,4 +33,4 @@ async def issue_otp(user: User, purpose: OTPPurpose, db: AsyncSession) -> None:
     try:
         send_otp_email(user.email, code, purpose.value)
     except Exception as exc:  # noqa: BLE001
-        logger.error("Failed to send OTP email to %s: %s", user.email, exc)
+        logger.error("Failed to send OTP email to user %s: %s", user.id, exc)

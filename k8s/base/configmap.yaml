@@ -5,6 +5,7 @@ metadata:
 data:
   PROJECT_NAME: "Solver Auth/KYC"
   ENVIRONMENT: "production"
+  LOG_LEVEL: "INFO"
   OTP_EXPIRE_MINUTES: "10"
   OTP_MAX_ATTEMPTS: "5"
   OTP_RESEND_COOLDOWN_SECONDS: "60"

@@ -27,7 +27,8 @@ ENV PYTHONPATH=/app/deps \
 
 EXPOSE 8000
 
-ENTRYPOINT ["python3", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# --proxy-headers so request logging (client_ip) and rate limiting see the real client behind the ingress
+ENTRYPOINT ["python3", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips=*"]
 
 
 # # ---- Builder stage ----

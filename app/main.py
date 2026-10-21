@@ -1,4 +1,8 @@
-from fastapi import FastAPI
+import logging
+import time
+import uuid
+
+from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi.errors import RateLimitExceeded
@@ -11,7 +15,11 @@ from app.core.exception_handlers import (
     validation_exception_handler,
 )
 from app.core.limiter import limiter
+from app.core.logging import request_id_var, setup_logging
 from app.api.v1.router import api_router
+
+setup_logging()
+logger = logging.getLogger("app.request")
 
 app = FastAPI(title=settings.PROJECT_NAME)
 
@@ -25,6 +33,36 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    request_id = request.headers.get("x-request-id") or uuid.uuid4().hex
+    token = request_id_var.set(request_id)
+    start = time.perf_counter()
+    # /health is polled constantly by probes; keep it out of INFO.
+    level = logging.DEBUG if request.url.path == "/health" else logging.INFO
+    try:
+        response = await call_next(request)
+    except Exception:
+        logger.error(
+            "%s %s -> 500", request.method, request.url.path,
+            extra={"method": request.method, "path": request.url.path, "status": 500,
+                   "duration_ms": round((time.perf_counter() - start) * 1000, 1)},
+        )
+        raise
+    else:
+        response.headers["X-Request-ID"] = request_id
+        logger.log(
+            level, "%s %s -> %s", request.method, request.url.path, response.status_code,
+            extra={"method": request.method, "path": request.url.path, "status": response.status_code,
+                   "duration_ms": round((time.perf_counter() - start) * 1000, 1),
+                   "client_ip": request.client.host if request.client else None},
+        )
+        return response
+    finally:
+        request_id_var.reset(token)
+
 
 app.add_exception_handler(RequestValidationError, validation_exception_handler)
 app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
