@@ -1,0 +1,70 @@
+name: CI/CD Pipeline to build, push, and deploy
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - 'README.md'
+      - '.gitattributes'
+
+jobs:
+  build-and-push:
+    name: Build Docker Image and Push to Docker Hub
+    runs-on: self-hosted
+
+    env:
+      IMAGE_TAG: dev-${{ github.run_number }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Login to Docker Hub
+        run: echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+
+      - name: Build Docker image
+        run: docker build -t docker.io/${{ secrets.DOCKERHUB_USERNAME }}/solver-auth:${{ env.IMAGE_TAG }} .
+
+      - name: Smoke test
+        run: |
+          IMAGE=docker.io/${{ secrets.DOCKERHUB_USERNAME }}/solver-auth:${{ env.IMAGE_TAG }}
+          if [ -f scripts/smoke_test.py ]; then
+            docker run --rm --entrypoint python3 -v "$PWD/scripts:/smoke:ro" $IMAGE /smoke/smoke_test.py
+          fi
+
+      - name: Push Docker image
+        run: |
+          IMAGE=docker.io/${{ secrets.DOCKERHUB_USERNAME }}/solver-auth:${{ env.IMAGE_TAG }}
+          docker push $IMAGE
+          echo "IMAGE=$IMAGE" >> $GITHUB_ENV
+
+      - name: Clean deployment workspace
+        run: rm -rf "$GITHUB_WORKSPACE/deployment-workspace"
+
+      - name: Clone deployment repository
+        uses: actions/checkout@v4
+        with:
+          repository: DeckyMart/deployment
+          ref: main
+          token: ${{ secrets.CHECKOUT_TOKEN }}
+          path: deployment-workspace
+
+      - name: Update deployment repo's deployment.yaml
+        working-directory: "deployment-workspace"
+        run: |
+          sed -i "s|image: .*|image: $IMAGE|" solver-auth/deployment.yaml
+
+      - name: Commit and push changes to deployment repo
+        working-directory: "deployment-workspace"
+        run: |
+          git config --global user.email "chriscrsov@gmail.com"
+          git config --global user.name "chriscrsov"
+          git add solver-auth/deployment.yaml
+          git diff --cached --quiet || git commit -m "Update solver-auth image tag to ${{ env.IMAGE_TAG }}"
+          git pull --rebase origin main
+          git push origin main
+
+      - name: Cleanup
+        if: always()
+        run: rm -rf "$GITHUB_WORKSPACE/deployment-workspace"

@@ -62,27 +62,29 @@ All admin actions write an activity_logs row in the same transaction.
 - Location = lat/lng floats + radius_km (no PostGIS yet).
 
 ## Config / deployment facts
-- Settings fields (all required): PROJECT_NAME, ENVIRONMENT, DATABASE_URL, JWT_SECRET_KEY, JWT_ALGORITHM, ACCESS_TOKEN_EXPIRE_MINUTES, REFRESH_TOKEN_EXPIRE_DAYS, REGISTRATION_TOKEN_EXPIRE_MINUTES (now unused), MAILJET_API_KEY/SECRET/SENDER_EMAIL, AWS_ACCESS_KEY_ID/SECRET_ACCESS_KEY/REGION/S3_BUCKET, AWS_S3_PUBLIC_BASE_URL, OTP_EXPIRE_MINUTES, OTP_MAX_ATTEMPTS, OTP_RESEND_COOLDOWN_SECONDS, MAX_PROFILE_IMAGE_SIZE_MB, MAX_ID_DOCUMENT_SIZE_MB, MAX_SELFIE_SIZE_MB, FRONTEND_ORIGINS, COOKIE_DOMAIN, COOKIE_SECURE, COOKIE_SAMESITE, GOOGLE_CLIENT_ID
-- LESSON (bit us twice): any new required Settings field must be added to the live ConfigMap/Secret BEFORE deploy, or pods crash-loop on pydantic ValidationError. Secrets (DATABASE_URL, JWT_SECRET_KEY, Mailjet, AWS keys) come from GitHub Actions Secrets → k8s Secret; non-secret config (incl. GOOGLE_CLIENT_ID) lives in a ConfigMap in the repo's k8s/ overlays.
+- Settings fields (all required unless noted): PROJECT_NAME, ENVIRONMENT, LOG_LEVEL (default INFO), DATABASE_URL, REDIS_URL, JWT_SECRET_KEY, JWT_ALGORITHM, ACCESS_TOKEN_EXPIRE_MINUTES, REFRESH_TOKEN_EXPIRE_DAYS, REGISTRATION_TOKEN_EXPIRE_MINUTES (unused), CUSTOMER_TOKEN_SIGNING_KEY (verify-only, signs the customer service's cust_access tokens), RESEND_API_KEY/RESEND_SENDER_EMAIL, AWS_ACCESS_KEY_ID/SECRET_ACCESS_KEY/REGION/S3_BUCKET, AWS_S3_PUBLIC_BASE_URL, OTP_EXPIRE_MINUTES, OTP_MAX_ATTEMPTS, OTP_RESEND_COOLDOWN_SECONDS, MAX_PROFILE_IMAGE_SIZE_MB, MAX_ID_DOCUMENT_SIZE_MB, MAX_SELFIE_SIZE_MB, MAX_POST_IMAGE_SIZE_MB, MAX_POST_VIDEO_SIZE_MB, MAX_POST_MEDIA_ITEMS, FRONTEND_ORIGINS, COOKIE_DOMAIN, COOKIE_SECURE, COOKIE_SAMESITE, GOOGLE_CLIENT_ID
+- LESSON (bit us twice): any new required Settings field must be added to the live ConfigMap/Secret BEFORE deploy, or pods crash-loop on pydantic ValidationError.
+- Email provider is Resend (not Mailjet — migrated). `app/services/email.py` calls Resend's REST API directly via `requests`, no SDK dependency.
+- Deployment moved out of this repo: manifests used to live in this repo's `k8s/` (kustomize), deployed via `.github/workflows/deploy.yml` calling a reusable workflow in `DeckyMart/deploy-workflows`. That path is now disabled (`deploy.yml` renamed to `deploy.yml.disabled`, reversible) and `k8s/` is deleted. Manifests now live in the separate `DeckyMart/deployment` repo, under `solver-auth/` (flat YAML files: namespace, configmap, deployment, service, ingress — no kustomize), applied by `.github/workflows/solver-auth-pipeline.yaml` in that repo via a `detect.py` script that only applies changed/unhealthy manifests. That pipeline also syncs GitHub Actions secrets (DATABASE_URL, JWT_SECRET_KEY, RESEND_API_KEY, AWS keys, REDIS_URL, CUSTOMER_TOKEN_SIGNING_KEY) into the `solver-auth-secrets` k8s Secret on every run — keep that list in sync with Settings or the same crash-loop lesson above applies. Non-secret config lives in that repo's `solver-auth/configmap.yaml` now, not a ConfigMap in this repo.
+- TLS cert for api.deckymart.com is auto-created by cert-manager's ingress-shim from the Ingress's `cert-manager.io/cluster-issuer` annotation alone — don't add a separate explicit `Certificate` resource pointing at the same secretName, cert-manager won't let two Certificates own one secret and the second one just sits at READY=False.
 - Domains: api.deckymart.com (live), app.deckymart.com, admin.deckymart.com (DNS A record still needed). TLS via cert-manager/Let's Encrypt.
 - Don't bake `alembic upgrade head` into the container CMD. Use a k8s Job/initContainer.
 
-## NOT built (designed, paused by owner)
-1. CSRF double-submit cookie (csrf_token non-httpOnly cookie + X-CSRF-Token header on: logout, refresh, complete-registration, PATCH /profile, PATCH /profile/files, create-admin, review/suspend/ban/activate). app/core/csrf.py does NOT exist. Becomes important now that SameSite=None is live, since multipart endpoints are CORS-preflight-exempt.
-2. Rate limiting (slowapi + Redis, since 2 replicas make in-memory limits wrong). app/core/limiter.py does NOT exist; Redis isn't provisioned. Agreed limits: login/admin-login 5/min; register, resend-code, forgot-password 3/hr; reset-password 5/hr; verify-email 10/hr.
-   Verify session_service.py and main.py contain no csrf/limiter imports.
+## Security: CSRF + rate limiting (built)
+- CSRF: double-submit cookie. `app/core/csrf.py` issues `csrf_token` (non-httpOnly) and checks it against the `X-CSRF-Token` header on every write endpoint across auth, profile, admin, posts, comments, reactions, and notifications. `GET /api/v1/csrf` mints the cookie for actors who never hit our own `/login` (i.e. customers, authenticated via `get_current_actor`) — solver/admin get it automatically at login.
+- Rate limiting: slowapi + Redis (`app/core/limiter.py`, `REDIS_URL` in Settings — needed since 2 replicas make in-memory limits wrong). Limits: login/admin-login 5/min; register, resend-code, forgot-password 3/hr; reset-password 5/hr; verify-email 10/hr; post creation 10/hr; comments 30/hr; reactions 60/min.
+- Gotcha: slowapi's `@limiter.limit(...)` needs a `response: Response` param on the decorated endpoint, or it 500s on any *successful* (non-exception) response trying to inject rate-limit headers — easy to miss since 401/429 failure paths never hit that code.
 
 ## Known gaps / backlog (priority order)
 1. SECURITY: /auth/google links to an existing solver account even if it is still pending_email_verification with a password someone else set (account pre-hijack). Fix: on linking an unverified account, null its password and move it to profile_incomplete.
 2. activate_solver always sets ACTIVE, so a solver suspended before KYC approval would bypass review. Store/restore the prior status or re-check KYC.
-3. CSRF + rate limiting (above).
-4. acct_num stored plaintext → app-level Fernet encryption (key from env/secret; KMS later).
-5. Zero tests (pytest, pytest-asyncio, httpx; 80% coverage target); no SonarQube step confirmed in pipeline.
-6. File content-type is client-declared only (add magic-byte check); boto3 put_object blocks the event loop (use threadpool/aioboto3 at scale).
-7. Email enumeration remains on /register, /verify-email, /resend-verification-code (owner chose to harden only /forgot-password).
-8. Google OAuth consent screen is still in Testing mode, so Publish before real users.
-9. Dead code: registration-token remnants (REGISTRATION_TOKEN_EXPIRE_MINUTES), EMAIL_VERIFIED/PROFILE_INCOMPLETE enum notes, stray lowercase enum values.
-10. Customer registration flow (separate service) not started. Optional: "set a password" nudge for Google-only users (deliberately deferred).
+3. acct_num stored plaintext → app-level Fernet encryption (key from env/secret; KMS later).
+4. Zero tests (pytest, pytest-asyncio, httpx; 80% coverage target); no SonarQube step confirmed in pipeline.
+5. File content-type is client-declared only (add magic-byte check); boto3 put_object blocks the event loop (use threadpool/aioboto3 at scale).
+6. Email enumeration remains on /register, /verify-email, /resend-verification-code (owner chose to harden only /forgot-password).
+7. Google OAuth consent screen is still in Testing mode, so Publish before real users.
+8. Dead code: registration-token remnants (REGISTRATION_TOKEN_EXPIRE_MINUTES), EMAIL_VERIFIED/PROFILE_INCOMPLETE enum notes, stray lowercase enum values.
+9. Customer registration flow: customer-kyc-auth exists and is integrated (comments/reactions resolve customer identity via their cust_access JWT, shared-secret HS256 verify-only — see CUSTOMER_TOKEN_SIGNING_KEY above). Still shared-secret, not yet migrated to their planned RS256/JWKS. Customer display name/avatar on comments is a snapshot taken at comment-creation time (from the JWT), not live — no lookup endpoint exists on their side to refresh it later.
 
 ## Frontend contract notes (React, separate devs)
 - Always credentials: "include" / withCredentials: true.
