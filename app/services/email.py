@@ -3,14 +3,14 @@ import requests
 from app.core.config import settings
 
 RESEND_API_URL = "https://api.resend.com/emails"
-
+MAIL_SENDER_NAME = "DeckyMart"
 
 def _send(to_email: str, subject: str, text_body: str) -> None:
     response = requests.post(
         RESEND_API_URL,
         headers={"Authorization": f"Bearer {settings.RESEND_API_KEY}"},
         json={
-            "from": f"SolveMart <{settings.RESEND_SENDER_EMAIL}>",
+            "from": f"{MAIL_SENDER_NAME} <{settings.RESEND_SENDER_EMAIL}>",
             "to": [to_email],
             "subject": subject,
             "text": text_body,
@@ -38,11 +38,11 @@ def send_otp_email(to_email: str, code: str, purpose: str) -> None:
 
 def send_review_result_email(to_email: str, approved: bool, rejection_reason: str | None = None) -> None:
     if approved:
-        subject = "Your SolveMart account has been approved"
-        text_body = "Congratulations! Your Solver account has been reviewed and approved. You can now log in and start receiving jobs."
+        subject = "Your DeckyMart account has been approved"
+        text_body = "Congratulations! Your DeckyMart account has been reviewed and approved. You can now log in and start receiving jobs."
     else:
-        subject = "Your SolveMart account submission needs attention"
-        text_body = f"Your Solver account submission was not approved. Reason: {rejection_reason}. Please update your profile and resubmit."
+        subject = "Your DeckyMart account submission needs attention"
+        text_body = f"Your DeckyMart account submission was not approved. Reason: {rejection_reason}. Please update your profile and resubmit."
     _send(to_email, subject, text_body)
 
 
@@ -50,13 +50,13 @@ def send_account_status_email(
     to_email: str, status: str, reason: str | None = None, restored_status: str | None = None
 ) -> None:
     if status == "suspended":
-        subject = "Your SolveMart account has been suspended"
+        subject = "Your DeckyMart account has been suspended"
         text_body = f"Your account has been suspended. Reason: {reason}. You can still view your account, but some features are restricted."
     elif status == "banned":
-        subject = "Your SolveMart account has been banned"
+        subject = "Your DeckyMart account has been banned"
         text_body = f"Your account has been banned. Reason: {reason}. Please contact support if you believe this is a mistake."
     else:
-        subject = "Your SolveMart account restriction has been lifted"
+        subject = "Your DeckyMart account restriction has been lifted"
         if restored_status == "active":
             text_body = "Your account has been reactivated and you now have full access again."
         elif restored_status == "pending_review":
