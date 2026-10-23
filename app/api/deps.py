@@ -13,7 +13,6 @@ from app.models.user import AccountStatus, User, UserRole
 CUSTOMER_ACCESS_COOKIE = "cust_access"
 CUSTOMER_TOKEN_ISSUER = "customer-service"
 
-
 async def get_current_user(request: Request, db: AsyncSession = Depends(get_db)) -> User:
     token = request.cookies.get("access_token")
     if not token:
