@@ -22,9 +22,8 @@ class Settings(BaseSettings):
     # tokens with this key, only verify. Shared with us out-of-band by the customer-service team.
     CUSTOMER_TOKEN_SIGNING_KEY: str
 
-    MAILJET_API_KEY: str
-    MAILJET_API_SECRET: str
-    MAILJET_SENDER_EMAIL: str
+    RESEND_API_KEY: str
+    RESEND_SENDER_EMAIL: str
 
     AWS_ACCESS_KEY_ID: str
     AWS_SECRET_ACCESS_KEY: str

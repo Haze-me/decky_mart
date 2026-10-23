@@ -1,28 +1,41 @@
-from mailjet_rest import Client
+import requests
 
 from app.core.config import settings
 
-mailjet = Client(auth=(settings.MAILJET_API_KEY, settings.MAILJET_API_SECRET), version="v3.1")
+RESEND_API_URL = "https://api.resend.com/emails"
+
+
+def _send(to_email: str, subject: str, text_body: str) -> None:
+    response = requests.post(
+        RESEND_API_URL,
+        headers={"Authorization": f"Bearer {settings.RESEND_API_KEY}"},
+        json={
+            "from": f"SolveMart <{settings.RESEND_SENDER_EMAIL}>",
+            "to": [to_email],
+            "subject": subject,
+            "text": text_body,
+        },
+        timeout=10,
+    )
+    if response.status_code >= 400:
+        # Deliberately not including the response body: Resend's error payloads can echo back
+        # request fields (e.g. the recipient address), and this message ends up in logs via the
+        # callers' `logger.error`. Status code + error name is enough to act on; full detail is
+        # in the Resend dashboard, which is where PII-adjacent debugging data belongs.
+        error_name = None
+        try:
+            error_name = response.json().get("name")
+        except ValueError:
+            pass
+        raise RuntimeError(f"Resend send failed: {response.status_code} ({error_name or 'unknown error'})")
 
 
 def send_otp_email(to_email: str, code: str, purpose: str) -> None:
     subject = "Verify your email" if purpose == "email_verification" else "Reset your password"
     text_body = f"Your verification code is {code}. It expires in {settings.OTP_EXPIRE_MINUTES} minutes."
+    _send(to_email, subject, text_body)
 
-    data = {
-        "Messages": [
-            {
-                "From": {"Email": settings.MAILJET_SENDER_EMAIL, "Name": "SolveMart"},
-                "To": [{"Email": to_email}],
-                "Subject": subject,
-                "TextPart": text_body,
-            }
-        ]
-    }
-    result = mailjet.send.create(data=data)
-    if result.status_code != 200:
-        raise RuntimeError(f"Mailjet send failed: {result.status_code} {result.json()}")
-    
+
 def send_review_result_email(to_email: str, approved: bool, rejection_reason: str | None = None) -> None:
     if approved:
         subject = "Your SolveMart account has been approved"
@@ -30,20 +43,7 @@ def send_review_result_email(to_email: str, approved: bool, rejection_reason: st
     else:
         subject = "Your SolveMart account submission needs attention"
         text_body = f"Your Solver account submission was not approved. Reason: {rejection_reason}. Please update your profile and resubmit."
-
-    data = {
-        "Messages": [
-            {
-                "From": {"Email": settings.MAILJET_SENDER_EMAIL, "Name": "SolveMart"},
-                "To": [{"Email": to_email}],
-                "Subject": subject,
-                "TextPart": text_body,
-            }
-        ]
-    }
-    result = mailjet.send.create(data=data)
-    if result.status_code != 200:
-        raise RuntimeError(f"Mailjet send failed: {result.status_code} {result.json()}")
+    _send(to_email, subject, text_body)
 
 
 def send_account_status_email(
@@ -65,17 +65,4 @@ def send_account_status_email(
             text_body = "Your restriction has been lifted. Your earlier submission was not approved. Please update your profile and resubmit."
         else:
             text_body = "Your account restriction has been lifted. Please log in to continue your registration."
-
-    data = {
-        "Messages": [
-            {
-                "From": {"Email": settings.MAILJET_SENDER_EMAIL, "Name": "SolveMart"},
-                "To": [{"Email": to_email}],
-                "Subject": subject,
-                "TextPart": text_body,
-            }
-        ]
-    }
-    result = mailjet.send.create(data=data)
-    if result.status_code != 200:
-        raise RuntimeError(f"Mailjet send failed: {result.status_code} {result.json()}")
+    _send(to_email, subject, text_body)

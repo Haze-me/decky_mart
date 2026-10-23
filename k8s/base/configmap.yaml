@@ -24,7 +24,7 @@ data:
   ACCESS_TOKEN_EXPIRE_MINUTES: "15"
   REFRESH_TOKEN_EXPIRE_DAYS: "7"
   REGISTRATION_TOKEN_EXPIRE_MINUTES: "30"
-  MAILJET_SENDER_EMAIL: "harrisonaka29@gmail.com"
+  RESEND_SENDER_EMAIL: "noreply@deckymart.com"
   AWS_REGION: "us-east-1"
   AWS_S3_BUCKET: "decky-auth-storage-655495220449-us-east-1-an"
   AWS_S3_PUBLIC_BASE_URL: "https://decky-auth-storage-655495220449-us-east-1-an.s3.amazonaws.com"

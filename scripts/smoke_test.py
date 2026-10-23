@@ -3,7 +3,7 @@ import importlib
 for m in [
     "fastapi", "uvicorn", "uvloop", "sqlalchemy", "asyncpg", "redis",
     "slowapi", "limits.storage", "pydantic_settings", "argon2",
-    "passlib.hash", "jose", "cryptography", "boto3", "httpx", "mailjet_rest",
+    "passlib.hash", "jose", "cryptography", "boto3", "httpx", "requests",
 ]:
     importlib.import_module(m)
 
