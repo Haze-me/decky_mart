@@ -91,3 +91,10 @@ All admin actions write an activity_logs row in the same transaction.
 - Google button must be on BOTH login and register pages (Google-only users have no password).
 - Route by account_status: profile_incomplete → finish registration; pending_review → under review; active → dashboard; suspended → dashboard + banner (reason from GET /profile); banned → 403 with reason.
 - Image URLs: profile_image_url is permanent; id_document_url/selfie_url (admin only) expire in 15 min. Never cache them.
+
+## Categories + match-service sync (added)
+- `app/core/categories.py` is the official category list (slug + name) and `CATEGORY_ALIASES` for legacy spellings. Registration and `PATCH /profile` reject a category not on it (400) and store the official NAME. `GET /auth/categories/all` = full list (Solver registration dropdown); `GET /auth/categories` = only categories an ACTIVE Solver holds (customer dropdown). `scripts/category_audit.py` is a read-only report of what Solvers registered with.
+- `app/services/match_sync.py` pushes a Solver to match-service (`PUT {MATCH_SERVICE_URL}/api/v1/internal/solvers/{id}`, header `X-Internal-Key`) via BackgroundTasks after the commit of: review (approve/reject), suspend, ban, activate, `PATCH /profile`, `PATCH /profile/files`. Best-effort: 3 attempts, failures are logged and never fail the request. Only verified/name/photo/category slug/state/base location/radius/version stamp are sent.
+- `scripts/sync_solvers_to_match.py` back-fills every Solver (dry run by default, `--apply` to send).
+- Settings `MATCH_SERVICE_URL` and `MATCH_INTERNAL_API_KEY` are OPTIONAL (empty = sync off) so a missing value can't crash-loop pods. `MATCH_INTERNAL_API_KEY` is a SECRET: add it to the GitHub Actions secrets list the pipeline syncs into `solver-auth-secrets`, and `MATCH_SERVICE_URL` (cluster-internal) to the ConfigMap.
+- Tests: `pytest` (tests/conftest.py supplies dummy settings; no DB/Redis/S3 needed).

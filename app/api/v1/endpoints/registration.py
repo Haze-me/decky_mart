@@ -5,6 +5,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
+from app.core.categories import resolve_category
 from app.core.csrf import verify_csrf
 from app.db.session import get_db
 from app.models.kyc_document import KYCDocument
@@ -44,6 +45,12 @@ async def complete_registration(
 ):
     if current_user.account_status != AccountStatus.PROFILE_INCOMPLETE:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Registration already completed")
+
+    # Checked before any S3 upload so a bad category costs nothing. Stored as the official name.
+    resolved_category = resolve_category(category)
+    if resolved_category is None:
+        raise HTTPException(status_code=400, detail="Unknown category. Choose one from GET /auth/categories/all")
+    category = resolved_category.name
 
     parsed_skills = None
     if skills:

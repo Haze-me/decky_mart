@@ -1,9 +1,10 @@
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import ensure_not_suspended, get_current_user
+from app.core.categories import resolve_category
 from app.core.csrf import verify_csrf
 from app.db.session import get_db
 from app.models.kyc_document import KYCDocument, KYCReviewStatus
@@ -16,6 +17,7 @@ from app.schemas.profile import (
     ProfileUpdateRequest,
     ProfileUpdateResponse,
 )
+from app.services.match_sync import push_solver_to_match
 from app.services.storage import FileValidationError, build_public_url, delete_file, validate_and_upload
 
 router = APIRouter(prefix="/auth", tags=["profile"])
@@ -82,6 +84,7 @@ async def get_own_profile(
 @router.patch("/profile", response_model=ProfileUpdateResponse, dependencies=[Depends(verify_csrf)])
 async def update_profile(
     payload: ProfileUpdateRequest,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -99,6 +102,12 @@ async def update_profile(
     for field, value in update_data.items():
         if value is None and field in REQUIRED_FIELDS:
             raise HTTPException(status_code=400, detail=f"{field} is required and cannot be cleared")
+
+    if update_data.get("category") is not None:
+        resolved_category = resolve_category(update_data["category"])
+        if resolved_category is None:
+            raise HTTPException(status_code=400, detail="Unknown category. Choose one from GET /auth/categories/all")
+        update_data["category"] = resolved_category.name
 
     user_fields = {"full_name", "phone_number"}
     for field, value in update_data.items():
@@ -123,11 +132,15 @@ async def update_profile(
         await db.rollback()
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Phone number already in use")
 
+    # An edit puts the Solver back to pending review, so match-service must stop sending them jobs.
+    background_tasks.add_task(push_solver_to_match, current_user.id)
+
     return ProfileUpdateResponse(detail="Profile updated. Pending re-review.", account_status=current_user.account_status)
 
 
 @router.patch("/profile/files", response_model=ProfileUpdateResponse, dependencies=[Depends(verify_csrf)])
 async def update_profile_files(
+    background_tasks: BackgroundTasks,
     profile_image: UploadFile | None = File(None),
     id_document: UploadFile | None = File(None),
     selfie: UploadFile | None = File(None),
@@ -173,6 +186,7 @@ async def update_profile_files(
     current_user.account_status = AccountStatus.PENDING_REVIEW
 
     await db.commit()
+    background_tasks.add_task(push_solver_to_match, current_user.id)
 
     for key in old_keys:
         delete_file(key)

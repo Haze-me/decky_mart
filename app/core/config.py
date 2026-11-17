@@ -54,6 +54,13 @@ class Settings(BaseSettings):
     
     GOOGLE_CLIENT_ID: str
 
+    # Match-service sync. Optional on purpose (a new REQUIRED setting crash-loops the pods until the
+    # ConfigMap/Secret has it): either one empty = syncing is switched off, nothing else changes.
+    # MATCH_SERVICE_URL is the cluster-internal base URL, e.g. http://match-service.<namespace>.svc:8000
+    # MATCH_INTERNAL_API_KEY must equal match-service's INTERNAL_API_KEY (a secret).
+    MATCH_SERVICE_URL: str = ""
+    MATCH_INTERNAL_API_KEY: str = ""
+
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=True)
 
 

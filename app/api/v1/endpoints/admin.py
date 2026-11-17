@@ -2,7 +2,7 @@ import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response, status
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -41,6 +41,7 @@ from app.schemas.admin import (
 from app.schemas.auth import LoginResponse
 from app.services.activity_log_service import ACTIVITY_TITLES, log_activity
 from app.services.email import send_account_status_email, send_review_result_email
+from app.services.match_sync import push_solver_to_match
 from app.services.otp_service import issue_otp
 from app.services.post_service import delete_post_and_media
 from app.services.session_service import issue_login_session
@@ -222,6 +223,7 @@ async def get_user_by_id(
 async def review_solver(
     user_id: uuid.UUID,
     payload: ReviewRequest,
+    background_tasks: BackgroundTasks,
     current_admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
@@ -259,6 +261,7 @@ async def review_solver(
     await log_activity(db, current_admin, user, activity_action, payload.rejection_reason)
 
     await db.commit()
+    background_tasks.add_task(push_solver_to_match, user.id)
 
     try:
         send_review_result_email(user.email, approved, payload.rejection_reason)
@@ -352,6 +355,7 @@ async def _apply_account_action(
     reason: str | None,
     current_admin: User,
     db: AsyncSession,
+    background_tasks: BackgroundTasks,
 ) -> User:
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
@@ -374,6 +378,7 @@ async def _apply_account_action(
 
     await log_activity(db, current_admin, user, activity_action, reason)
     await db.commit()
+    background_tasks.add_task(push_solver_to_match, user.id)
 
     try:
         send_account_status_email(user.email, new_status.value, reason)
@@ -387,10 +392,11 @@ async def _apply_account_action(
 async def suspend_solver(
     user_id: uuid.UUID,
     payload: SuspendBanRequest,
+    background_tasks: BackgroundTasks,
     current_admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    user = await _apply_account_action(user_id, AccountStatus.SUSPENDED, ActivityAction.SUSPENDED, payload.reason, current_admin, db)
+    user = await _apply_account_action(user_id, AccountStatus.SUSPENDED, ActivityAction.SUSPENDED, payload.reason, current_admin, db, background_tasks)
     return AccountActionResponse(id=user.id, account_status=user.account_status, message="Solver suspended")
 
 
@@ -398,10 +404,11 @@ async def suspend_solver(
 async def ban_solver(
     user_id: uuid.UUID,
     payload: SuspendBanRequest,
+    background_tasks: BackgroundTasks,
     current_admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    user = await _apply_account_action(user_id, AccountStatus.BANNED, ActivityAction.BANNED, payload.reason, current_admin, db)
+    user = await _apply_account_action(user_id, AccountStatus.BANNED, ActivityAction.BANNED, payload.reason, current_admin, db, background_tasks)
     return AccountActionResponse(id=user.id, account_status=user.account_status, message="Solver banned")
 
 
@@ -423,6 +430,7 @@ async def _restore_status(user: User, db: AsyncSession) -> AccountStatus:
 @router.patch("/user/{user_id}/activate", response_model=AccountActionResponse, dependencies=[Depends(verify_csrf)])
 async def activate_solver(
     user_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
     current_admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
@@ -442,6 +450,7 @@ async def activate_solver(
 
     await log_activity(db, current_admin, user, ActivityAction.ACTIVATED)
     await db.commit()
+    background_tasks.add_task(push_solver_to_match, user.id)
 
     try:
         send_account_status_email(user.email, "activated", restored_status=restored.value)
